@@ -5,6 +5,7 @@
 source "https://rubygems.org"
 
 ruby "2.0.0"
+#ruby-gemset=intelmeal_ru
 
 gem "scraperwiki", git: "https://github.com/openaustralia/scraperwiki-ruby.git", branch: "morph_defaults"
 gem "mechanize"
