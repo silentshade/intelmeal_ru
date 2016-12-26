@@ -2,6 +2,8 @@
 # including some code snippets below that you should find helpful
 require 'scraperwiki'
 require 'mechanize'
+require_relative 'tryable'
+require 'pry'
 
 class Scraper
   attr_reader :agent, :base_page
@@ -50,8 +52,8 @@ class Scraper
 
     elements_table = content[4].search('div.fd0')
 
-    [:general, :energy, :fats, :proteins, :carbohydrates].each do |elem_block|
-      product[elem_block] = send("_parse_#{elem_block}", elements_table.shift)
+    [:general, :energy, :fats, :proteins, :carbohydrates, :vitamins, :minerals, :sterols, :other].each do |elem_block|
+      product[elem_block] = _parse_common_table elements_table.shift
     end
   ensure
     pp product
@@ -59,102 +61,35 @@ class Scraper
 
   private
 
-    def _parse_general(table)
-      Hash[[:water,
-            :carbohydrates,
-            :fibers,
-            :fats,
-            :proteins,
-            :alcohol,
-            :cholesterol,
-            :ashes].zip (7..14).map{|i| _parse_row(table.element_children[i].element_children) rescue nil }]
-    end
-
-    def _parse_energy(table)
-      data = table.element_children[-1].element_children
-      total = _parse_row(data[0..2])
-      total.delete(:name)
-      res = { total: total }
-      Hash[[:from_carbohydrates,
-            :from_fats,
-            :from_proteins,
-            :from_alcohol].zip(data[3..-1].map do |el|
-                                parsed_row = _parse_row(el.element_children)
-                                parsed_row.delete(:name)
-                                parsed_row
-                              end)].merge(res)
-    end
-
-    def _parse_fats(table)
-      _parse_fats_subgroup table.element_children[6]
-    end
-
-    def _parse_fats_subgroup(table)
+    def _parse_common_table(table, res = {})
       data = table.element_children
-      total = _parse_row(data[0..2])
-      name = total.delete(:name)
-      res = {total: total}
-      if name == 'Жиры:'
-        {saturated: 3, monounsaturated: 4, polyunsaturated: 5}.each do |key, index|
-          res[key] = _parse_fats_subgroup(data[index])
-        end
-      else
-        data[4..-1].each_with_index do |row, i|
-          res[i] = _parse_row(row.element_children)
+      title_nodes = data.select do |child|
+        klass = child.attributes['class']
+        klass.text.match(/(?:fd1|fd4|fd3)(?:\s|$)/) if klass
+      end
+      group_nodes = data.select{|child| child.attributes.keys.include?('cd') }
+      total = _parse_row title_nodes
+
+      if (name = total[:name])
+        res[name] = {}
+        if group_nodes.size > 0
+          res[name][:total] = total.reject{|k,v| k == :name } if total[:value]
+        else
+          res[name] = total.reject{|k,v| k == :name }
         end
       end
-      res
-    end
 
-    def _parse_proteins(table)
-      _parse_proteins_subgroup table.element_children[6]
-    end
-
-    def _parse_proteins_subgroup(table)
-      data = table.element_children
-      total = _parse_row(data[0..2])
-      name = total.delete(:name)
-      res = {}
-      if name == 'Белки:'
-        res[:total] = total
-        {indispensable: 3, dispensable: 4}.each do |key, index|
-          res[key] = _parse_proteins_subgroup(data[index])
-        end
-      elsif name == ''
-      else
-        data[4..-1].each_with_index do |row, i|
-          res[i] = _parse_row(row.element_children)
-        end
+      group_nodes.each do |subtable|
+        _parse_common_table subtable, (res[total[:name]] || res)
       end
-      res
-    end
 
-    def _parse_carbohydrates(table)
-      _parse_cb_subgroup table.element_children[4]
-    end
-
-    def _parse_cb_subgroup(table)
-      data = table.element_children
-      total = _parse_row(data[0..2])
-      name = total.delete(:name)
-      res = {total: total}
-      if name == 'Углеводы всего:'
-        {fiber: 3, amylum: 4}.each do |key, index|
-          res[key] = _parse_row(data[index].element_children)
-        end
-        res[:sugar] = _parse_cb_subgroup(data[5])
-      else
-        data[4..-1].each_with_index do |row, i|
-          res[i] = _parse_row(row.element_children)
-        end
-      end
       res
     end
 
     def _parse_row(row)
       name, val, rsp = row.map(&:text)
       val, metric = val.to_s.strip.chomp.split(/[[:space:]]/)
-      val = nil if val.nil? || val.empty?
+      val = nil if val.nil? || val.empty? || val == '~'
       name = _parse_name name
       Hash[ [:value, :metric, :rsp].zip([_parse_value(val), metric, rsp]) ].merge(name)
     end
